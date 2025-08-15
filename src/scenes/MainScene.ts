@@ -35,6 +35,9 @@ export class MainScene extends Phaser.Scene {
   private currentMovementMode: MovementMode =
     ServerConfig.settings.movementDefaultMode;
 
+  // Invisible static walls for the inner border
+  private walls!: Phaser.Physics.Arcade.StaticGroup;
+
   constructor() {
     super("Main");
   }
@@ -44,16 +47,45 @@ export class MainScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, worldW, worldH);
     createArena(this);
 
+    // ---- Physics bounds & walls exactly on the inner red border
+    {
+      const s = ServerConfig.settings;
+      const innerW = s.gridCols * s.cellWidth;
+      const innerH = s.gridRows * s.cellHeight;
+      const left = s.arenaMargin;
+      const top = s.arenaMargin;
+
+      // Physics world is ONLY the inner arena
+      this.physics.world.setBounds(left, top, innerW, innerH);
+
+      // Create thin static walls right on the border (1–2 px thick)
+      this.walls = this.physics.add.staticGroup();
+      const mkWall = (x: number, y: number, w: number, h: number) => {
+        const rect = this.add.rectangle(x, y, w, h).setOrigin(0, 0).setAlpha(0);
+        this.physics.add.existing(rect, true); // static
+        (this.walls as any).add(rect);
+      };
+      mkWall(left, top - 1, innerW, 2); // top
+      mkWall(left, top + innerH - 1, innerW, 2); // bottom
+      mkWall(left - 1, top, 2, innerH); // left
+      mkWall(left + innerW - 1, top, 2, innerH); // right
+    }
+
     // Specials grid
     this.livingGrid = new LivingGrid(this);
     this.livingGrid.reshuffle();
 
     // World systems
     this.enemies = new EnemyManager(this, null, this.livingGrid);
+    // Enemies must collide with the inner walls
+    this.physics.add.collider(this.enemies.getGroup(), this.walls);
+
     this.score = new ScoreSystem(this);
     this.score.mount();
+
     this.health = new HealthSystem(this);
     this.health.mount(this.score);
+
     this.leaderboard = new Leaderboard(this);
     this.leaderboard.mount();
 
@@ -212,7 +244,9 @@ export class MainScene extends Phaser.Scene {
         (bulletObj) => {
           const bullet = bulletObj as any;
           if (!bullet.active) return;
-          if (bullet.body?.stop) bullet.body.stop();
+          if ((bullet.body as Phaser.Physics.Arcade.Body | undefined)?.stop) {
+            (bullet.body as Phaser.Physics.Arcade.Body).stop();
+          }
           bullet.setActive(false).setVisible(false);
         }
       );
@@ -230,7 +264,9 @@ export class MainScene extends Phaser.Scene {
             radius: s.secondaryExplosionRadius,
             damage: rocket.damage ?? s.secondaryDamage,
           });
-          if (rocket.body?.stop) rocket.body.stop();
+          if ((rocket.body as Phaser.Physics.Arcade.Body | undefined)?.stop) {
+            (rocket.body as Phaser.Physics.Arcade.Body).stop();
+          }
           rocket.setActive(false).setVisible(false);
         }
       );
@@ -247,7 +283,15 @@ export class MainScene extends Phaser.Scene {
     const y = s.arenaMargin + Math.random() * innerH;
 
     this.player = new Player(this, x, y);
-    this.player.setMovementMode(this.currentMovementMode); // apply current choice
+
+    // Make player respect physics inner bounds too
+    const body = this.player.body as Phaser.Physics.Arcade.Body | undefined;
+    if (body) body.setCollideWorldBounds(true);
+
+    // Collide player with inner walls
+    this.physics.add.collider(this.player, this.walls);
+
+    this.player.setMovementMode(this.currentMovementMode);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.enemies.setPlayer(this.player);
 
@@ -267,7 +311,9 @@ export class MainScene extends Phaser.Scene {
           const dmg = bullet.damage ?? ServerConfig.settings.primaryDamage;
           const killerColor = this.player!.getTintColor?.() ?? 0xffffff;
           this.enemies.applyHit(enemy, dmg, this.username!, killerColor);
-          if (bullet.body?.stop) bullet.body.stop();
+          if ((bullet.body as Phaser.Physics.Arcade.Body | undefined)?.stop) {
+            (bullet.body as Phaser.Physics.Arcade.Body).stop();
+          }
           bullet.setActive(false).setVisible(false);
         }
       }
@@ -291,7 +337,9 @@ export class MainScene extends Phaser.Scene {
             this.username!,
             killerColor
           );
-          if (rocket.body?.stop) rocket.body.stop();
+          if ((rocket.body as Phaser.Physics.Arcade.Body | undefined)?.stop) {
+            (rocket.body as Phaser.Physics.Arcade.Body).stop();
+          }
           rocket.setActive(false).setVisible(false);
         }
       }
@@ -315,25 +363,29 @@ export class MainScene extends Phaser.Scene {
     );
 
     // Enemy contact → damage to player
-    this.enemies.setupPlayerCollision((amount, _enemy) => {
+    this.enemies.setupPlayerCollision((amount) => {
       if (!this.player) return;
       const hpNow = this.health.damage(amount);
       if (hpNow <= 0) this.handlePlayerDeath();
     });
 
+    // Pinball blocks (if any spawned by LivingGrid)
     this.setupPinballColliders();
   }
 
   private performServerReset() {
+    // Clear projectiles
     this.weapons?.getBulletsGroup().clear(true, true);
     this.weapons?.getRocketsGroup().clear(true, true);
+
+    // Keep leaderboard as-is (no resetAll() in your API)
     this.score.reset();
-    this.leaderboard.resetAll();
+    this.health.reset();
+
+    // Respawn enemies / specials
     this.enemies.repopulate();
-    // Full special-cell rebuild; removes old pin visuals too
     this.livingGrid.reshuffle();
     this.setupPinballColliders();
-    this.health.reset();
   }
 
   private handlePlayerDeath() {

@@ -1,25 +1,18 @@
-import { ServerConfig } from '../core/ServerConfig'
+import { ServerConfig } from "../core/ServerConfig";
+import { worldToCell, labelForCell, indexToLetters } from "./Cells";
 
-export function worldToCell(x: number, y: number) {
-  const s = ServerConfig.settings
-  const col = Math.floor((x - s.arenaMargin) / s.cellWidth)
-  const row = Math.floor((y - s.arenaMargin) / s.cellHeight)
-  return { row, col }
-}
-
-export function indexToLetters(n: number) {
-  let s = ''; n = Math.floor(n)
-  while (n >= 0) { s = String.fromCharCode((n % 26) + 65) + s; n = Math.floor(n / 26) - 1 }
-  return s
-}
+// Re-export canonical helpers to avoid drift.
+export { worldToCell, indexToLetters };
 
 export function cellIdFromRowCol(row: number, col: number) {
-  return `${indexToLetters(row)}${col + 1}`
+  return labelForCell(row, col);
 }
 
 export function isInsideWorld(x: number, y: number) {
-  const b = { x: ServerConfig.settings.arenaMargin, y: ServerConfig.settings.arenaMargin,
-              w: ServerConfig.settings.gridCols * ServerConfig.settings.cellWidth,
-              h: ServerConfig.settings.gridRows * ServerConfig.settings.cellHeight }
-  return x >= b.x && y >= b.y && x < b.x + b.w && y < b.y + b.h
+  const s = ServerConfig.settings;
+  const left = s.arenaMargin;
+  const top = s.arenaMargin;
+  const innerW = s.gridCols * s.cellWidth;
+  const innerH = s.gridRows * s.cellHeight;
+  return x >= left && y >= top && x < left + innerW && y < top + innerH;
 }
